@@ -46,6 +46,35 @@ jobs:
           set -e
           curl -fsS https://get.acme.sh | sh -s email="$ACME_MAIL"
 
+      # ★★★ B667) **검증 이름을 미리 만들어 둔다.** (2026-09-16 · 2차 실패)
+      #   2차 오류: `During secondary validation: DNS problem: **NXDOMAIN** looking up TXT`
+      #   — 1차의 DNSSEC Bogus 는 풀렸고, 이번엔 Let's Encrypt 의 **보조 검증 지점**이 그 이름을 「없다」로 봤다.
+      #
+      #   왜 — `_acme-challenge.geurumedi.dedyn.io` 는 acme.sh 가 넣기 전까지 **존재하지 않는 이름**이다.
+      #   그 사이에 누가 한 번이라도 물으면 리졸버가 **「없다」를 negative TTL 만큼 캐시**한다.
+      #   deSEC 의 SOA minimum 은 **3600(1시간)** 이라, 그 뒤에 TXT 를 넣어도 한 시간 동안 NXDOMAIN 이 돌아온다.
+      #
+      #   ⭕ 자리지킴 값을 하나 두면 그 이름이 **늘 존재**한다 → 「없다」가 캐시될 일이 없다.
+      #   ⚠ acme.sh(dns_desec)는 검증이 끝나면 **자기 값만** 빼므로 이 자리지킴은 그대로 남는다.
+      - name: 검증 이름을 미리 만들어 둔다(NXDOMAIN 캐시 막기)
+        env:
+          DEDYN_TOKEN: ${{ secrets.DESEC_TOKEN }}
+        run: |
+          set -e
+          code=$(curl -sS -o /tmp/ph.json -w "%{http_code}" -X PUT \
+            "https://desec.io/api/v1/domains/$ALIAS/rrsets/_acme-challenge/TXT/" \
+            -H "Authorization: Token $DEDYN_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d "{\"subname\":\"_acme-challenge\",\"type\":\"TXT\",\"ttl\":3600,\"records\":[\"\\\"tm-cert placeholder\\\"\"]}")
+          echo "· 자리지킴 PUT → $code"; cat /tmp/ph.json; echo
+          case "$code" in 200|201) : ;; *) echo "✗ 자리지킴을 못 넣었다 — 토큰·도메인 이름을 확인할 것"; exit 1 ;; esac
+          echo "· 60초 기다린 뒤 밖에서 보이는지 확인"
+          sleep 60
+          for r in 8.8.8.8 1.1.1.1 9.9.9.9; do
+            echo -n "  $r → "; dig +short @"$r" TXT "_acme-challenge.$ALIAS" | tr "\n" " "; echo
+          done
+          echo -n "  CNAME 을 따라온 이름(8.8.8.8) → "; dig +short @8.8.8.8 TXT "_acme-challenge.$DOMAIN" | tr "\n" " "; echo
+
       - name: 인증서 발급
         env:
           DEDYN_TOKEN: ${{ secrets.DESEC_TOKEN }}   # deSEC 토큰(저장소 비밀)
@@ -56,8 +85,11 @@ jobs:
             --domain "$DOMAIN" \
             --dns dns_desec \
             --challenge-alias "$ALIAS" \
-            --keylength 2048 \
-            --dnssleep 60
+            --keylength 2048
+          # ★★★ B667) **`--dnssleep 60` 을 걷었다.**
+          #   그 옵션은 「60초 자고 무조건 넘어간다」는 뜻이다 — 퍼졌는지는 보지 않는다.
+          #   빼면 acme.sh 가 **공개 리졸버로 TXT 가 실제로 보이는지 확인한 뒤**에 검증을 요청한다.
+          #   (§8 「고정 대기는 그 일이 끝났나를 안 본다」와 같은 자리다)
 
       - name: 결과 파일 모으기
         run: |
