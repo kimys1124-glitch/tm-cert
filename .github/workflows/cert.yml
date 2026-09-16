@@ -61,12 +61,27 @@ jobs:
           DEDYN_TOKEN: ${{ secrets.DESEC_TOKEN }}
         run: |
           set -e
-          code=$(curl -sS -o /tmp/ph.json -w "%{http_code}" -X PUT \
-            "https://desec.io/api/v1/domains/$ALIAS/rrsets/_acme-challenge/TXT/" \
+          # ⚠ B667-2) deSEC 은 **없는 rrset 을 PUT 으로 못 만든다**(404 "No RRset matches the given query").
+          #   새로 만들 때는 컬렉션에 **POST**, 이미 있으면 그 자리에 **PUT** 이다.
+          #   TXT 값은 **DNS 표기 그대로**(따옴표를 포함한 문자열)라 JSON 을 파일로 만들어 보낸다
+          #   — 셸 한 줄에 넣으면 따옴표가 세 겹이 되어 틀리기 쉽다.
+          #   ⚠ heredoc 은 쓸 수 없다 — 종료 토큰이 줄 맨 앞이라야 하는데 YAML 블록은 거기서 끊긴다.
+          printf %s '{"subname":"_acme-challenge","type":"TXT","ttl":3600,"records":["\"tm-cert placeholder\""]}' > /tmp/ph.json
+          code=$(curl -sS -o /tmp/res.json -w "%{http_code}" -X POST \
+            "https://desec.io/api/v1/domains/$ALIAS/rrsets/" \
             -H "Authorization: Token $DEDYN_TOKEN" \
             -H "Content-Type: application/json" \
-            -d "{\"subname\":\"_acme-challenge\",\"type\":\"TXT\",\"ttl\":3600,\"records\":[\"\\\"tm-cert placeholder\\\"\"]}")
-          echo "· 자리지킴 PUT → $code"; cat /tmp/ph.json; echo
+            --data @/tmp/ph.json)
+          echo "· 자리지킴 POST → $code"; cat /tmp/res.json; echo
+          if [ "$code" = "400" ] || [ "$code" = "409" ]; then
+            echo "· 이미 있다 → 그 자리에 PUT"
+            code=$(curl -sS -o /tmp/res.json -w "%{http_code}" -X PUT \
+              "https://desec.io/api/v1/domains/$ALIAS/rrsets/_acme-challenge/TXT/" \
+              -H "Authorization: Token $DEDYN_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data @/tmp/ph.json)
+            echo "· 자리지킴 PUT → $code"; cat /tmp/res.json; echo
+          fi
           case "$code" in 200|201) : ;; *) echo "✗ 자리지킴을 못 넣었다 — 토큰·도메인 이름을 확인할 것"; exit 1 ;; esac
           echo "· 60초 기다린 뒤 밖에서 보이는지 확인"
           sleep 60
