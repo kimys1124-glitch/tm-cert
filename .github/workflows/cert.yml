@@ -1,0 +1,92 @@
+name: 인증서 발급·갱신
+
+# car.geurumedi.co.kr 인증서를 Let's Encrypt 에서 받아 이 저장소에 올린다.
+#  · 검증은 DNS-01 — 가비아의 `_acme-challenge.car` CNAME 이 deSEC 으로 위임돼 있어
+#    acme.sh 가 deSEC API 로 TXT 를 넣고 뺀다(가비아는 손대지 않는다).
+#  · 깃허브 러너는 매번 새것이라 상태가 남지 않는다 → 돌 때마다 새로 발급한다.
+#    ⚠ Let's Encrypt 는 **같은 이름 반복 발급이 7일에 5장**이므로 자주 돌리지 말 것.
+#  · 키는 RSA 2048 — 앱의 인증서 읽기가 지금 RSA 전용이다(CertManager.parsePrivateKey).
+
+on:
+  schedule:
+    - cron: "0 3 1 */2 *"      # 두 달에 한 번(1일 03:00 UTC)
+  workflow_dispatch:            # 손으로도 돌릴 수 있다
+
+permissions:
+  contents: write
+
+concurrency:
+  group: cert
+  cancel-in-progress: false
+
+env:
+  DOMAIN: car.geurumedi.co.kr
+  ALIAS: geurumedi.dedyn.io      # 검증 TXT 가 실제로 쓰이는 곳
+  ACME_MAIL: kimys1124@gmail.com
+
+jobs:
+  issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 저장소 받기
+        uses: actions/checkout@v4
+
+      - name: 위임이 제대로 걸렸는지 먼저 확인
+        run: |
+          set -e
+          echo "· _acme-challenge.$DOMAIN 의 CNAME:"
+          dig +short CNAME "_acme-challenge.$DOMAIN" | tee /tmp/cname.txt
+          grep -q "_acme-challenge.$ALIAS" /tmp/cname.txt \
+            || { echo "✗ 위임이 안 걸렸다 — 가비아의 CNAME 을 확인할 것"; exit 1; }
+          echo "· $DOMAIN 의 A:"
+          dig +short A "$DOMAIN"
+
+      - name: acme.sh 설치
+        run: |
+          set -e
+          curl -fsS https://get.acme.sh | sh -s email="$ACME_MAIL"
+
+      - name: 인증서 발급
+        env:
+          DEDYN_TOKEN: ${{ secrets.DESEC_TOKEN }}   # deSEC 토큰(저장소 비밀)
+        run: |
+          set -e
+          ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
+          ~/.acme.sh/acme.sh --issue \
+            --domain "$DOMAIN" \
+            --dns dns_desec \
+            --challenge-alias "$ALIAS" \
+            --keylength 2048 \
+            --dnssleep 60
+
+      - name: 결과 파일 모으기
+        run: |
+          set -e
+          D=~/.acme.sh/$DOMAIN
+          mkdir -p cert
+          cp "$D/$DOMAIN.cer" cert/server.pem
+          cp "$D/ca.cer"      cert/chain.pem
+          cp "$D/$DOMAIN.key" cert/server.key
+          cp "$D/fullchain.cer" cert/fullchain.pem
+          # 만료일·발급 대상을 적어 둔다(앱·사람이 눈으로 확인용)
+          {
+            echo "domain=$DOMAIN"
+            echo "notAfter=$(openssl x509 -in cert/server.pem -noout -enddate | cut -d= -f2)"
+            echo "issuer=$(openssl x509 -in cert/server.pem -noout -issuer | sed 's/^issuer=//')"
+            echo "issuedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > cert/info.txt
+          cat cert/info.txt
+          openssl x509 -in cert/server.pem -noout -subject -dates
+
+      - name: 저장소에 올리기
+        run: |
+          set -e
+          git config user.name  "cert bot"
+          git config user.email "actions@github.com"
+          git add cert
+          if git diff --cached --quiet; then
+            echo "바뀐 것이 없다 — 올리지 않는다"
+          else
+            git commit -m "인증서 갱신 $(date -u +%Y-%m-%d)"
+            git push
+          fi
