@@ -1,6 +1,9 @@
 name: 인증서 발급·갱신
 
-# car.geurumedi.co.kr 인증서를 Let's Encrypt 에서 받아 이 저장소에 올린다.
+# car.geurumedi.co.kr · car1.geurumedi.co.kr **두 이름을 한 장**에 받아 이 저장소에 올린다.
+#  · ★ B685) car = 메인폰(192.0.0.2) · car1 = 세컨폰(192.0.0.8). 둘 다 가비아 `_acme-challenge.<이름>` CNAME 이
+#    같은 `_acme-challenge.geurumedi.dedyn.io` 로 위임돼 있어 TXT 두 값이 한 자리에 함께 들어간다.
+#  · ⚠ 앱은 SAN 에 car 가 있는지만 본다 — 이름을 더해도 앱은 그대로 받아 간다.
 #  · 검증은 DNS-01 — 가비아의 `_acme-challenge.car` CNAME 이 deSEC 으로 위임돼 있어
 #    acme.sh 가 deSEC API 로 TXT 를 넣고 뺀다(가비아는 손대지 않는다).
 #  · 깃허브 러너는 매번 새것이라 상태가 남지 않는다 → 돌 때마다 새로 발급한다.
@@ -11,6 +14,9 @@ on:
   schedule:
     - cron: "0 3 1 */2 *"      # 두 달에 한 번(1일 03:00 UTC)
   workflow_dispatch:            # 손으로도 돌릴 수 있다
+  push:                         # ★ B685) 이 파일을 고치면 곧바로 새 이름으로 받는다
+    branches: [main]
+    paths: [".github/workflows/cert.yml"]
 
 permissions:
   contents: write
@@ -20,7 +26,8 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  DOMAIN: car.geurumedi.co.kr
+  DOMAIN: car.geurumedi.co.kr    # 주 이름(acme.sh 폴더 이름이기도 하다)
+  DOMAIN2: car1.geurumedi.co.kr  # ★ B685) 세컨폰
   ALIAS: geurumedi.dedyn.io      # 검증 TXT 가 실제로 쓰이는 곳
   ACME_MAIL: kimys1124@gmail.com
 
@@ -40,6 +47,12 @@ jobs:
             || { echo "✗ 위임이 안 걸렸다 — 가비아의 CNAME 을 확인할 것"; exit 1; }
           echo "· $DOMAIN 의 A:"
           dig +short A "$DOMAIN"
+          echo "· _acme-challenge.$DOMAIN2 의 CNAME:"
+          dig +short CNAME "_acme-challenge.$DOMAIN2" | tee /tmp/cname2.txt
+          grep -q "_acme-challenge.$ALIAS" /tmp/cname2.txt \
+            || { echo "✗ $DOMAIN2 위임이 안 걸렸다 — 가비아의 CNAME 을 확인할 것"; exit 1; }
+          echo "· $DOMAIN2 의 A:"
+          dig +short A "$DOMAIN2"
 
       - name: acme.sh 설치
         run: |
@@ -97,10 +110,11 @@ jobs:
           set -e
           ~/.acme.sh/acme.sh --set-default-ca --server letsencrypt
           ~/.acme.sh/acme.sh --issue \
-            --domain "$DOMAIN" \
+            --domain "$DOMAIN" --challenge-alias "$ALIAS" \
+            --domain "$DOMAIN2" --challenge-alias "$ALIAS" \
             --dns dns_desec \
-            --challenge-alias "$ALIAS" \
             --keylength 2048
+          # ★ B685) 대리 검증 주소는 이름 순서대로 짝지어진다 — 이름마다 하나씩 준다
           # ★★★ B667) **`--dnssleep 60` 을 걷었다.**
           #   그 옵션은 「60초 자고 무조건 넘어간다」는 뜻이다 — 퍼졌는지는 보지 않는다.
           #   빼면 acme.sh 가 **공개 리졸버로 TXT 가 실제로 보이는지 확인한 뒤**에 검증을 요청한다.
@@ -118,6 +132,7 @@ jobs:
           # 만료일·발급 대상을 적어 둔다(앱·사람이 눈으로 확인용)
           {
             echo "domain=$DOMAIN"
+            echo "san=$(openssl x509 -in cert/server.pem -noout -ext subjectAltName | tail -1 | tr -d ' ')"
             echo "notAfter=$(openssl x509 -in cert/server.pem -noout -enddate | cut -d= -f2)"
             echo "issuer=$(openssl x509 -in cert/server.pem -noout -issuer | sed 's/^issuer=//')"
             echo "issuedAt=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
