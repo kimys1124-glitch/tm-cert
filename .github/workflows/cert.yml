@@ -59,14 +59,14 @@ jobs:
           echo "· $DOMAIN2 의 A:"
           dig +short A "$DOMAIN2"
 
-      # ★★ B1125) 주소별 이름 c0~c15 → 192.0.0.0~15 를 deSEC 에 만든다(있으면 고친다 · bulk PATCH)
-      - name: 주소별 이름 만들기(c0~c15)
+      # ★★ B1125·B1130) 주소별 이름 c0~c31 → 192.0.0.0~31 을 deSEC 에 만든다(있으면 고친다 · bulk PATCH)
+      - name: 주소별 이름 만들기(c0~c31)
         env:
           DEDYN_TOKEN: ${{ secrets.DESEC_TOKEN }}
         run: |
           set -e
           # + 입구 페이지 go.geurumedi.dedyn.io → 깃허브 페이지(kimys1124-glitch.github.io · 저장소 tm-go)
-          python3 -c 'import json; print(json.dumps([{"subname":"c%d"%n,"type":"A","ttl":3600,"records":["192.0.0.%d"%n]} for n in range(16)] + [{"subname":"go","type":"CNAME","ttl":3600,"records":["kimys1124-glitch.github.io."]}]))' > /tmp/a.json
+          python3 -c 'import json; print(json.dumps([{"subname":"c%d"%n,"type":"A","ttl":3600,"records":["192.0.0.%d"%n]} for n in range(32)] + [{"subname":"go","type":"CNAME","ttl":3600,"records":["kimys1124-glitch.github.io."]}]))' > /tmp/a.json
           code=$(curl -sS -o /tmp/res.json -w "%{http_code}" -X PATCH \
             "https://desec.io/api/v1/domains/$ALIAS/rrsets/" \
             -H "Authorization: Token $DEDYN_TOKEN" \
@@ -75,7 +75,7 @@ jobs:
           echo "· 주소별 이름 PATCH → $code"; head -c 600 /tmp/res.json; echo
           case "$code" in 200|201) : ;; *) echo "✗ 주소별 이름을 못 만들었다"; exit 1 ;; esac
           sleep 20
-          for n in 2 4 8 10; do echo -n "  c$n → "; dig +short @ns1.desec.io A "c$n.$ALIAS"; done
+          for n in 2 4 8 10 20 31; do echo -n "  c$n → "; dig +short @ns1.desec.io A "c$n.$ALIAS"; done
 
       - name: acme.sh 설치
         run: |
@@ -143,6 +143,31 @@ jobs:
           #   그 옵션은 「60초 자고 무조건 넘어간다」는 뜻이다 — 퍼졌는지는 보지 않는다.
           #   빼면 acme.sh 가 **공개 리졸버로 TXT 가 실제로 보이는지 확인한 뒤**에 검증을 요청한다.
           #   (§8 「고정 대기는 그 일이 끝났나를 안 본다」와 같은 자리다)
+
+      # ★★ B1130) 자리지킴을 **되살린다** (2026-10-17 두 번째 실패에서 찾음).
+      #   위의 「자기 값만 뺀다」는 틀렸다 — 실제로는 acme.sh(dns_desec)가 끝날 때 TXT rrset 을 **통째로** 지워
+      #   `_acme-challenge.geurumedi.dedyn.io` 가 다시 「없는 이름」이 됐다(공개 리졸버 셋 · ns1.desec.io 모두 NXDOMAIN).
+      #   그러면 Let's Encrypt 보조 검증 지점이 그 「없다」를 1시간 캐시해 다음 실행(1시간 안)의 와일드카드가 또 NXDOMAIN 으로 진다.
+      #   → 발급이 성공하든 실패하든 끝에 자리지킴을 다시 넣어 그 이름이 **늘 있게** 한다.
+      - name: 자리지킴 되살리기(늘 있게)
+        if: always()
+        env:
+          DEDYN_TOKEN: ${{ secrets.DESEC_TOKEN }}
+        run: |
+          printf %s '{"subname":"_acme-challenge","type":"TXT","ttl":3600,"records":["\"tm-cert placeholder\""]}' > /tmp/ph.json
+          code=$(curl -sS -o /tmp/res.json -w "%{http_code}" -X POST \
+            "https://desec.io/api/v1/domains/$ALIAS/rrsets/" \
+            -H "Authorization: Token $DEDYN_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data @/tmp/ph.json)
+          if [ "$code" = "400" ] || [ "$code" = "409" ]; then
+            code=$(curl -sS -o /tmp/res.json -w "%{http_code}" -X PUT \
+              "https://desec.io/api/v1/domains/$ALIAS/rrsets/_acme-challenge/TXT/" \
+              -H "Authorization: Token $DEDYN_TOKEN" \
+              -H "Content-Type: application/json" \
+              --data @/tmp/ph.json)
+          fi
+          echo "· 자리지킴 되살리기 → $code"; cat /tmp/res.json; echo
 
       - name: 결과 파일 모으기
         run: |
