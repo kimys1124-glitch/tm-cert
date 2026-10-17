@@ -136,8 +136,11 @@ jobs:
             --domain "$DOMAIN" --challenge-alias "$ALIAS" \
             --domain "$DOMAIN2" --challenge-alias "$ALIAS" \
             --domain "$DOMAIN3" --challenge-alias "$ALIAS" \
-            --dns dns_desec \
+            --dns dns_desec --dnssleep 300 \
             --keylength 2048
+          # ★★ B1135) `--dnssleep 300` 을 다시 넣었다(B667 이 뺀 것). 10-18 00:14 세 번째 실패는 「Incorrect TXT record」 —
+          #   acme.sh 의 공개 리졸버 확인은 통과했는데 2초 뒤 Let's Encrypt 는 새 값을 못 봤다(deSEC 반영 지연 또는 그쪽 캐시).
+          #   deSEC 은 TTL 이 3600 이하로 안 내려가 한 번 틀리면 한 시간을 잃는다 → 넣은 뒤 5분 그냥 기다렸다가 검증을 부른다.
           # ★ B685) 대리 검증 주소는 이름 순서대로 짝지어진다 — 이름마다 하나씩 준다
           # ★★★ B667) **`--dnssleep 60` 을 걷었다.**
           #   그 옵션은 「60초 자고 무조건 넘어간다」는 뜻이다 — 퍼졌는지는 보지 않는다.
