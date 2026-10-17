@@ -28,6 +28,11 @@ concurrency:
 env:
   DOMAIN: car.geurumedi.co.kr    # 주 이름(acme.sh 폴더 이름이기도 하다)
   DOMAIN2: car1.geurumedi.co.kr  # ★ B685) 세컨폰
+  # ★★ B1125) 주소별 이름 c0~c15.geurumedi.dedyn.io → 192.0.0.0~15 (2026-10-17 · 연결 범용성)
+  #   폰이 받는 192.0.0.x 는 폰·통신사가 정한다(KT .2·.8 · AOSP clat .4~.7 · KT 테더링 .10) — car(.2)·car1(.8) 만으로는
+  #   그 밖의 주소를 받은 폰을 차가 영영 못 찾았다. 이름은 우리 deSEC 영역에 API 로 만든다(가비아 손 안 댐).
+  #   인증서는 와일드카드 한 장(*.geurumedi.dedyn.io)이 전부 덮는다 — 검증 TXT 자리가 위 대리 검증 자리와 같다.
+  DOMAIN3: "*.geurumedi.dedyn.io"
   ALIAS: geurumedi.dedyn.io      # 검증 TXT 가 실제로 쓰이는 곳
   ACME_MAIL: kimys1124@gmail.com
 
@@ -53,6 +58,24 @@ jobs:
             || { echo "✗ $DOMAIN2 위임이 안 걸렸다 — 가비아의 CNAME 을 확인할 것"; exit 1; }
           echo "· $DOMAIN2 의 A:"
           dig +short A "$DOMAIN2"
+
+      # ★★ B1125) 주소별 이름 c0~c15 → 192.0.0.0~15 를 deSEC 에 만든다(있으면 고친다 · bulk PATCH)
+      - name: 주소별 이름 만들기(c0~c15)
+        env:
+          DEDYN_TOKEN: ${{ secrets.DESEC_TOKEN }}
+        run: |
+          set -e
+          # + 입구 페이지 go.geurumedi.dedyn.io → 깃허브 페이지(kimys1124-glitch.github.io · 저장소 tm-go)
+          python3 -c 'import json; print(json.dumps([{"subname":"c%d"%n,"type":"A","ttl":3600,"records":["192.0.0.%d"%n]} for n in range(16)] + [{"subname":"go","type":"CNAME","ttl":3600,"records":["kimys1124-glitch.github.io."]}]))' > /tmp/a.json
+          code=$(curl -sS -o /tmp/res.json -w "%{http_code}" -X PATCH \
+            "https://desec.io/api/v1/domains/$ALIAS/rrsets/" \
+            -H "Authorization: Token $DEDYN_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data @/tmp/a.json)
+          echo "· 주소별 이름 PATCH → $code"; head -c 600 /tmp/res.json; echo
+          case "$code" in 200|201) : ;; *) echo "✗ 주소별 이름을 못 만들었다"; exit 1 ;; esac
+          sleep 20
+          for n in 2 4 8 10; do echo -n "  c$n → "; dig +short @ns1.desec.io A "c$n.$ALIAS"; done
 
       - name: acme.sh 설치
         run: |
@@ -112,6 +135,7 @@ jobs:
           ~/.acme.sh/acme.sh --issue \
             --domain "$DOMAIN" --challenge-alias "$ALIAS" \
             --domain "$DOMAIN2" --challenge-alias "$ALIAS" \
+            --domain "$DOMAIN3" --challenge-alias "$ALIAS" \
             --dns dns_desec \
             --keylength 2048
           # ★ B685) 대리 검증 주소는 이름 순서대로 짝지어진다 — 이름마다 하나씩 준다
