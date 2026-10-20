@@ -1,5 +1,5 @@
 domain=car.geurumedi.co.kr
 san=DNS:*.geurumedi.dedyn.io,DNS:car.geurumedi.co.kr,DNS:car1.geurumedi.co.kr
-notAfter=Jan 15 16:23:48 2027 GMT
+notAfter=Jan 18 01:11:24 2027 GMT
 issuer=C = US, O = Let's Encrypt, CN = YR2
-issuedAt=2026-10-17T17:22:22Z
+issuedAt=2026-10-20T02:09:57Z
