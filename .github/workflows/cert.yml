@@ -66,7 +66,9 @@ jobs:
         run: |
           set -e
           # + 입구 페이지 go.geurumedi.dedyn.io → 깃허브 페이지(kimys1124-glitch.github.io · 저장소 tm-go)
-          python3 -c 'import json; print(json.dumps([{"subname":"c%d"%n,"type":"A","ttl":3600,"records":["192.0.0.%d"%n]} for n in range(32)] + [{"subname":"go","type":"CNAME","ttl":3600,"records":["kimys1124-glitch.github.io."]}]))' > /tmp/a.json
+          # + ★ B1176) car.geurumedi.dedyn.io → 192.0.0.2 — car.geurumedi.co.kr 와 섞어 쳐도 붙게(2026-10-20 · 사용자 오타 「car.geurumedi.dedyn.io」 가 없는 이름이었다)
+          #   인증서는 와일드카드(*.geurumedi.dedyn.io)가 이미 덮는다 — 폰 443 앞문으로 car.geurumedi.co.kr 와 똑같이 붙는다
+          python3 -c 'import json; print(json.dumps([{"subname":"c%d"%n,"type":"A","ttl":3600,"records":["192.0.0.%d"%n]} for n in range(32)] + [{"subname":"go","type":"CNAME","ttl":3600,"records":["kimys1124-glitch.github.io."]}] + [{"subname":"car","type":"A","ttl":3600,"records":["192.0.0.2"]}]))' > /tmp/a.json
           code=$(curl -sS -o /tmp/res.json -w "%{http_code}" -X PATCH \
             "https://desec.io/api/v1/domains/$ALIAS/rrsets/" \
             -H "Authorization: Token $DEDYN_TOKEN" \
@@ -76,6 +78,7 @@ jobs:
           case "$code" in 200|201) : ;; *) echo "✗ 주소별 이름을 못 만들었다"; exit 1 ;; esac
           sleep 20
           for n in 2 4 8 10 20 31; do echo -n "  c$n → "; dig +short @ns1.desec.io A "c$n.$ALIAS"; done
+          echo -n "  car → "; dig +short @ns1.desec.io A "car.$ALIAS"   # ★ B1176)
 
       - name: acme.sh 설치
         run: |
